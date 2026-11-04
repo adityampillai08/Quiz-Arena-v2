@@ -105,11 +105,20 @@ export function renderReview(answers) {
     boosterInfo.className = 'review-item__booster';
     if (boosterId === 'pass') {
       boosterInfo.textContent = 'Skipped with Pass';
+      boosterInfo.classList.add('review-item__booster--pass');
     } else if (boosterId) {
       const def = BOOSTER_DEFINITIONS[boosterId];
       boosterInfo.textContent = def ? `Boost: ${def.name}` : `Boost: ${boosterId}`;
     } else {
       boosterInfo.textContent = 'No booster';
+    }
+
+    // Add "Skipped" label for Pass booster to distinguish from wrong answers
+    if (record.skipped && boosterId === 'pass') {
+      const skippedLabel = document.createElement('span');
+      skippedLabel.className = 'review-item__skipped-badge';
+      skippedLabel.textContent = 'Skipped';
+      children.push(skippedLabel);
     }
 
     if (record.timedOut) {

@@ -241,11 +241,24 @@ function buildBoosterTray(inventory, currentlyActive, bus) {
     el('span', { className: 'booster-card__description', text: def.description || '' })
   );
 
-    // Add click handler
-    card.addEventListener('click', (e) => {
+    // Shared activation handler for both click and keyboard
+    const activateBooster = (e) => {
+      e.preventDefault();
       e.stopPropagation();
       // Tell the engine to request this booster
       bus.emit(EVENTS.UI_BOOSTER_REQUESTED, { boosterId });
+    };
+
+    // Add click handler
+    card.addEventListener('click', activateBooster);
+
+    // Add keyboard handler for Enter and Space
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        // Prevent Space from scrolling the page
+        e.preventDefault();
+        activateBooster(e);
+      }
     });
 
     tray.append(card);

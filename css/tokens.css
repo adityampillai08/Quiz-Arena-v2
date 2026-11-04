@@ -5,6 +5,7 @@
   --color-surface: #2D1B4E;
   --color-surface-2: #44296F;
   --color-border: #5A3D8A;
+  --color-border--soft: rgba(90, 61, 138, 0.16);
   --color-text: #FBF3E4;
   --color-text-muted: #BDB0D6;
   --color-accent: #FFC83D;
