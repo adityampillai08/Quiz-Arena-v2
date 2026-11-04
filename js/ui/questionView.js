@@ -182,16 +182,16 @@ function colourOptions(record, correctIndex, eliminatedIndexes = []) {
 
 /** Build the booster tray HTML */
 function buildBoosterTray(inventory, currentlyActive, bus) {
-  // Create tray container if it doesn't exist
+  // Use existing tray from HTML, or create if missing
   let tray = byId('booster-tray');
   if (!tray) {
-    tray = el('div', { className: 'booster-tray' }, null);
+    tray = el('div', { className: 'booster-tray', id: 'booster-tray' }, null);
     tray.setAttribute('role', 'region');
     tray.setAttribute('aria-label', 'Booster tray');
     const main = byId('main');
     if (main) main.insertBefore(tray, byId('next-button'));
-    boosterTray = tray;
   }
+  boosterTray = tray;
 
   // Clear existing buttons
   clearChildren(tray);
@@ -363,12 +363,20 @@ export function initQuestionView({ bus }) {
     if (nextButton) nextButton.hidden = true;
     const screen = byId('screen-quiz');
     if (screen) screen.removeAttribute('data-phase');
-    // Remove tray and overlay
-    if (boosterTray) boosterTray.remove();
+    // Clear booster tray content but don't remove the static element from HTML
+    if (boosterTray) clearChildren(boosterTray);
     if (boosterOverlay) boosterOverlay.remove();
     boosterTray = null;
     boosterOverlay = null;
     currentlyActiveBooster = null;
+    // CRITICAL: Reset closure state that persists between quizzes
+    eliminatedOptions = [];
+    currentQuestion = null;
+    // Ensure options list is properly cleared
+    if (list) {
+      // Remove any event listeners or residual state
+      list.innerHTML = '';
+    }
   }
 
   function setupBoosterTray(inventory) {
@@ -377,17 +385,14 @@ export function initQuestionView({ bus }) {
   }
 
   function showBoosterGrant(newBoosters, grantNumber) {
-    console.log('showBoosterGrant called:', { newBoosters, grantNumber });
     // Show the grant overlay
     boosterOverlay = buildBoosterGrantOverlay(newBoosters, boosterInventory, grantNumber, () => {
-      console.log('Booster grant overlay closed');
       // User clicked "Let's go" or pressed Escape
       boosterOverlay.remove();
       boosterOverlay = null;
       // After overlay closes, notify engine to proceed
       bus.emit(EVENTS.UI_BOOSTERS_REVEAL_DONE);
     });
-    console.log('boosterOverlay after buildBoosterGrantOverlay:', boosterOverlay);
   }
 
   function handleQuestionShown(payload) {
@@ -505,7 +510,6 @@ export function initQuestionView({ bus }) {
 
   // --- Setup (runs once) ---
   bus.on(EVENTS.BOOSTERS_GRANTED, ({ newBoosters, inventory, grantNumber }) => {
-    console.log('BOOSTERS_GRANTED received:', { newBoosters, inventory, grantNumber });
     // Store inventory
     boosterInventory = inventory;
     // Show the grant overlay

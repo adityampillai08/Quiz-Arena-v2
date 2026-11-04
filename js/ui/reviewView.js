@@ -17,6 +17,9 @@ export function renderReview(answers) {
 
   if (!list || !title || !emptyMessage) return;
 
+  // Clear previous review items before adding new ones
+  clearChildren(list);
+
   const misses = Array.isArray(answers)
     ? answers.filter((answer) => answer && answer.isCorrect === false)
     : [];

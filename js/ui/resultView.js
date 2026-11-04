@@ -3,7 +3,7 @@
  */
 
 import { EVENTS } from '../constants.js';
-import { byId, formatDuration, formatNumber, capitalize } from '../dom.js';
+import { byId, formatDuration, formatNumber, capitalize, clearChildren } from '../dom.js';
 import { renderReview } from './reviewView.js';
 
 /** @param {{ bus: EventBus }} deps */

@@ -38,7 +38,7 @@ const startView = initStartView({
   getSettings: localStore.getSettings,
   getBestScore: localStore.getBestScore,
 });
-initQuestionView({ bus });
+const questionView = initQuestionView({ bus });
 initTimerView({ bus });
 const resultView = initResultView({ bus });
 const leaderboardView = initLeaderboardView({
@@ -134,6 +134,12 @@ bus.on(EVENTS.UI_LEADERBOARD_BACK, () => {
 bus.on(EVENTS.UI_PLAY_AGAIN, () => {
   // Reset per-game state
   screenBeforeLeaderboard = SCREENS.START;
+
+  // Reset the quiz engine state (questions, answers, boosters, score, streak)
+  engine.reset();
+
+  // Reset the question view state (booster tray, overlay, local state, current question, eliminations)
+  questionView.reset();
 
   // Reset last played category/difficulty in localStorage
   localStore.saveSettings({
