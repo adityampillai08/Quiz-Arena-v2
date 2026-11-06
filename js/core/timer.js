@@ -150,10 +150,11 @@ export class CountdownTimer {
         return;
       }
     } else {
-      // Timer is frozen: still update _remainingMs for reading, but don't count down
-      const effectiveDuration = this._durationMsOriginal + this._extraTimeMs;
-      const elapsed = performance.now() - this._startedAt;
-      this._frozenRemainingMs = Math.max(0, effectiveDuration - elapsed);
+      // Timer is frozen: freeze() already stored the remaining time in _frozenRemainingMs.
+      // Do not recalculate it (elapsed wall-clock time would shrink it).
+      // Do not call _expire - just emit the tick so the UI can display the frozen value.
+      this._safeCall(this._onTick, this._frozenRemainingMs);
+      return;
     }
 
     this._expire(runId);
