@@ -179,6 +179,35 @@ export class QuizEngine {
   }
 
   /**
+   * Calculate the base score components for the current question (without booster effects).
+   * Used for boosters that need to apply their effect at answer lock time.
+   * @param {boolean} assumeCorrect - if true, compute streak bonus as if this answer is correct (streak + 1)
+   * @returns {{ basePoints: number, timeBonus: number, streakBonus: number, difficulty: string }}
+   */
+  _calculateBaseScoreForQuestion(assumeCorrect = false) {
+    const question = this._questions[this._index];
+    if (!question) return { basePoints: 0, timeBonus: 0, streakBonus: 0, difficulty: 'medium' };
+
+    const difficulty = question.difficulty || this._config.difficulty;
+    const basePoints = BASE_POINTS[difficulty] || 0;
+
+    // Calculate time bonus at the moment of activation
+    const totalMs = this._questionTimeMs;
+    const remainingMs = this._timer.remainingMs;
+    const safeRemainingMs = Math.max(0, Math.min(remainingMs, totalMs));
+    const timeBonus = totalMs > 0 ? Math.round((MAX_TIME_BONUS * safeRemainingMs) / totalMs) : 0;
+
+    // Calculate streak bonus from current streak (or streak+1 if assuming correct answer)
+    const currentStreak = this._streak || 0;
+    const streakForBonus = assumeCorrect ? currentStreak + 1 : currentStreak;
+    const streakSteps = Math.max(0, streakForBonus - 1);
+    const difficultyMultiplier = { easy: 0.75, medium: 1, hard: 1.5 }[difficulty] || 1;
+    const streakBonus = STREAK_BONUS_STEP * difficultyMultiplier * streakSteps;
+
+    return { basePoints, timeBonus, streakBonus, difficulty };
+  }
+
+  /**
    * Request to use a booster from the inventory.
    * @param {string} boosterId
    */
@@ -216,7 +245,10 @@ export class QuizEngine {
     const difficultyMultiplier = { easy: 0.75, medium: 1, hard: 1.5 }[difficulty] || 1;
     const streakBonus = STREAK_BONUS_STEP * difficultyMultiplier * streakSteps;
 
-    // Apply the booster using the scoring helper
+    // Compute base score components at activation for use at lock time
+    const baseScoreComponents = this._calculateBaseScoreForQuestion();
+
+    // Apply the booster using the scoring helper with isCorrect:false for initial delta
     const { pointsAwarded, streakChange, description } = applyBooster({
       boosterId,
       isCorrect: false, // Will be corrected after answer lock
@@ -249,6 +281,7 @@ export class QuizEngine {
       pointsAwarded,
       streakChange,
       description,
+      baseScoreComponents, // Store for lock-time computation
     };
 
     // For some boosters, we need special handling
@@ -294,7 +327,7 @@ export class QuizEngine {
             const removeIndexes = shuffled.slice(0, 2);
             const remaining = options.filter((_, i) => !removeIndexes.includes(i));
             this._bus.emit(EVENTS.OPTIONS_ELIMINATED, {
-              removedIndexes,
+              removedIndexes: removeIndexes,
               remainingOptions: remaining,
             });
           }
@@ -435,8 +468,26 @@ export class QuizEngine {
 
     // Handle booster-specific logic if one was used
     if (this._boosterUsedThisQuestion && this._lastBoosterInfo) {
-      const { boosterId, pointsAwarded: boostedPoints, streakChange: boostedStreakChange } = this._lastBoosterInfo;
+      const { boosterId, pointsAwarded: boostedPoints, streakChange: boostedStreakChange, baseScoreComponents, description } = this._lastBoosterInfo;
       boosterUsed = boosterId;
+
+      // For Double Up and Double Jeopardy, recompute at lock time with actual correctness
+      if (boosterId === 'double-up' || boosterId === 'double-jeopardy') {
+        // Compute base score at lock time with actual correctness for streak bonus
+        const { basePoints, timeBonus, streakBonus, difficulty } = this._calculateBaseScoreForQuestion(isCorrectBefore);
+        const { pointsAwarded: recomputedPoints, streakChange: recomputedStreakChange } = applyBooster({
+          boosterId,
+          isCorrect: isCorrectBefore,
+          skipped: false,
+          basePoints,
+          timeBonus,
+          streakBonus,
+          difficulty,
+        });
+        pointsAwarded = recomputedPoints;
+        streakChange = recomputedStreakChange;
+        pointsDelta = recomputedPoints - (basePoints + timeBonus + streakBonus);
+      }
 
       switch (boosterId) {
         case 'second-chance':
@@ -477,13 +528,12 @@ export class QuizEngine {
           break;
 
         case 'double-jeopardy':
+        case 'double-up':
+          // Already handled above by recomputation
+          isCorrect = isCorrectBefore;
           if (isCorrectBefore) {
-            isCorrect = true;
-            pointsAwarded = boostedPoints;
             streakChange = boostedStreakChange;
           } else {
-            isCorrect = false;
-            pointsAwarded = boostedPoints; // Already includes penalty (never below 0)
             streakChange = -1; // streak resets
           }
           break;
@@ -501,7 +551,7 @@ export class QuizEngine {
           break;
 
         default:
-          // For eraser, fifty-fifty, time-freeze, extra-time, double-up
+          // For eraser, fifty-fifty, time-freeze, extra-time
           if (isCorrectBefore) {
             isCorrect = true;
             pointsAwarded = boostedPoints;
@@ -536,14 +586,21 @@ export class QuizEngine {
     this._score += pointsAwarded;
 
     // Calculate pointsDelta for the record
-    const basePoints = BASE_POINTS[question.difficulty || this._config.difficulty] || 0;
-    const safeRemainingMs = Math.max(0, Math.min(remainingMs, totalMs));
-    const timeBonus = totalMs > 0 ? Math.round((MAX_TIME_BONUS * safeRemainingMs) / totalMs) : 0;
-    const streakSteps = Math.max(0, (isCorrect ? (this._streak || 0) : 0) - 1);
-    const difficultyMultiplier = { easy: 0.75, medium: 1, hard: 1.5 }[question.difficulty || this._config.difficulty] || 1;
-    const streakBonus = STREAK_BONUS_STEP * difficultyMultiplier * streakSteps;
-    const baseScore = basePoints + timeBonus + streakBonus;
-    pointsDelta = pointsAwarded - baseScore;
+    // For boosters that recomputed pointsDelta (double-up, double-jeopardy), use the already computed value
+    // For others, compute fresh
+    if (this._boosterUsedThisQuestion && this._lastBoosterInfo &&
+        (this._lastBoosterInfo.boosterId === 'double-up' || this._lastBoosterInfo.boosterId === 'double-jeopardy')) {
+      // pointsDelta already correctly computed at lock time with correct streak bonus
+    } else {
+      const basePoints = BASE_POINTS[question.difficulty || this._config.difficulty] || 0;
+      const safeRemainingMs = Math.max(0, Math.min(remainingMs, totalMs));
+      const timeBonus = totalMs > 0 ? Math.round((MAX_TIME_BONUS * safeRemainingMs) / totalMs) : 0;
+      const streakSteps = Math.max(0, (isCorrect ? (this._streak || 0) : 0) - 1);
+      const difficultyMultiplier = { easy: 0.75, medium: 1, hard: 1.5 }[question.difficulty || this._config.difficulty] || 1;
+      const streakBonus = STREAK_BONUS_STEP * difficultyMultiplier * streakSteps;
+      const baseScore = basePoints + timeBonus + streakBonus;
+      pointsDelta = pointsAwarded - baseScore;
+    }
 
     // Emit answer locked with full record
     const record = {
